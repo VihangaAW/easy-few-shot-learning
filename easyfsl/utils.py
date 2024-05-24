@@ -15,6 +15,9 @@ from tqdm import tqdm
 
 from easyfsl.methods import FewShotClassifier
 
+from sklearn.metrics import f1_score
+from sklearn import metrics
+import random
 
 def plot_images(images: Tensor, title: str, images_per_row: int):
     """
@@ -102,7 +105,10 @@ def evaluate_on_one_task(
     number_of_correct_predictions = int(
         (torch.max(predictions, 1)[1] == query_labels).sum().item()
     )
-    return number_of_correct_predictions, len(query_labels)
+
+    predicted_labels = torch.max(predictions, 1)[1]
+
+    return number_of_correct_predictions, len(query_labels), predicted_labels, query_labels
 
 
 def evaluate(
@@ -131,6 +137,9 @@ def evaluate(
     # eval mode affects the behaviour of some layers (such as batch normalization or dropout)
     # no_grad() tells torch not to keep in memory the whole computational graph
     model.eval()
+    predictions_all = []
+    query_labels_all = []
+
     with torch.no_grad():
         # We use a tqdm context to show a progress bar in the logs
         with tqdm(
@@ -146,7 +155,31 @@ def evaluate(
                 query_labels,
                 _,
             ) in tqdm_eval:
-                correct, total = evaluate_on_one_task(
+
+                # Check support_images, support_labels etc individual length chatgpt
+                print("LENGTH I support_images: " + str(len(support_images)))
+                print("LENGTH I support_labels: " + str(len(support_labels)))
+                print("LENGTH I query_images: " + str(len(query_images)))
+                print("LENGTH I query_labels: " + str(len(query_labels)))
+                
+                
+                
+                # # Combine the two lists into a list of tuples, where each tuple contains corresponding elements from both lists
+                # combined_task_lists = list(zip(support_images, support_labels, query_images, query_labels))
+
+                # # Shuffle the combined list
+                # random.shuffle(combined_task_lists)
+
+                # # Unzip the shuffled list to get back the randomized lists
+                # support_images, support_labels, query_images, query_labels = zip(*combined_task_lists)
+
+                # # Convert the tuples back to tensors
+                # support_images = torch.stack(support_images)
+                # support_labels = torch.stack(support_labels)
+                # query_images = torch.stack(query_images)
+                # query_labels = torch.stack(query_labels)
+
+                correct, total, predictions_per_task, query_labels_per_task = evaluate_on_one_task(
                     model,
                     support_images.to(device),
                     support_labels.to(device),
@@ -157,8 +190,29 @@ def evaluate(
                 total_predictions += total
                 correct_predictions += correct
 
+                predictions_all.extend(predictions_per_task.detach().cpu().numpy())
+                query_labels_all.extend(query_labels_per_task.cpu().numpy())
+                # print(query_labels_per_task)
                 # Log accuracy in real time
                 tqdm_eval.set_postfix(accuracy=correct_predictions / total_predictions)
+
+
+    query_labels_all = np.array(query_labels_all)
+    predictions_all = np.array(predictions_all)
+
+
+    print("Number of Query Labels - Val: " + str(len(query_labels_all)))
+    print("Number of Predicted Labels - Val: " + str(len(predictions_all)))
+
+    f1 = f1_score(query_labels_all, predictions_all, average=None)
+    print("F1 Score is: " + str(f1))
+
+    mse = mean_squared_error(query_labels_all, predictions_all)
+    mae = mean_absolute_error(query_labels_all, predictions_all)
+
+    print("Mean Squared Error (MSE): " + str(mse))
+    print("Mean Absolute Error (MAE): " + str(mae))  
+
 
     return correct_predictions / total_predictions
 
@@ -181,3 +235,10 @@ def compute_average_features_from_images(
     if device is not None:
         average_features = average_features.to(device)
     return average_features
+
+def mean_squared_error(y_true, y_pred):
+    return np.mean((y_true - y_pred)**2)
+
+def mean_absolute_error(y_true, y_pred):
+    return np.mean(np.abs(y_true - y_pred))
+
